@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -18,14 +19,20 @@ func (t TodoRecord) ToJSON() []byte {
 }
 
 func (s *Service) CreateTODO(userToken string, text string) (*TodoRecord, error) {
+	tx, err := s.Db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, NewErrorFromDBError(err)
+	}
+	defer tx.Rollback()
+
 	var userId int
-	s.Db.QueryRow("SELECT id FROM users WHERE user_token = ?", userToken).Scan(&userId)
+	tx.QueryRow("SELECT id FROM users WHERE user_token = ?", userToken).Scan(&userId)
 
 	if userId == 0 {
 		return nil, NewErrorNotFound(nil)
 	}
 
-	result, err := s.Db.Exec("INSERT INTO todos (content, user_id) values (?, ?)", text, userId)
+	result, err := tx.Exec("INSERT INTO todos (content, user_id) values (?, ?)", text, userId)
 	if err != nil {
 		return nil, NewErrorFromDBError(err)
 	}
@@ -33,6 +40,8 @@ func (s *Service) CreateTODO(userToken string, text string) (*TodoRecord, error)
 	newId, _ := result.LastInsertId()
 
 	todo := &TodoRecord{Id: int(newId), Text: text}
+
+	tx.Commit()
 
 	s.Notifier.Notify(todo.Text, userId)
 
@@ -72,16 +81,22 @@ func (s *Service) ViewMany(userToken string) ([]TodoRecord, error) {
 }
 
 func (s *Service) Update(userToken string, id int, text string) (*TodoRecord, error) {
+	tx, err := s.Db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, NewErrorFromDBError(err)
+	}
+	defer tx.Rollback()
+
 	var userId int
 	var isAdmin int
 
-	s.Db.QueryRow("SELECT id, is_admin FROM users WHERE user_token = ?", userToken).Scan(&userId, &isAdmin)
+	tx.QueryRow("SELECT id, is_admin FROM users WHERE user_token = ?", userToken).Scan(&userId, &isAdmin)
 
 	if userId == 0 {
 		return nil, NewErrorNotFound(nil)
 	}
 
-	res, err := s.Db.Exec("UPDATE todos SET content = ? WHERE (user_id = ? OR ?) AND id = ?", text, userId, isAdmin, id)
+	res, err := tx.Exec("UPDATE todos SET content = ? WHERE (user_id = ? OR ?) AND id = ?", text, userId, isAdmin, id)
 	if err != nil {
 		return nil, NewErrorFromDBError(err)
 	}
@@ -91,26 +106,37 @@ func (s *Service) Update(userToken string, id int, text string) (*TodoRecord, er
 		return nil, NewErrorFromDBError(fmt.Errorf("no data to update"))
 	}
 
+	tx.Commit()
+
 	return &TodoRecord{Id: id, Text: text}, nil
 }
 
 func (s *Service) Delete(userToken string, id int) error {
+	tx, err := s.Db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return NewErrorFromDBError(err)
+	}
+	defer tx.Rollback()
+
 	var userId int
 	var isAdmin int
 
-	selectErr := s.Db.QueryRow("SELECT id, is_admin FROM users WHERE user_token = ?", userToken).Scan(&userId, &isAdmin)
+	err = tx.QueryRow("SELECT id, is_admin FROM users WHERE user_token = ?", userToken).Scan(&userId, &isAdmin)
 
-	if selectErr != nil {
-		return NewErrorFromDBError(selectErr)
+	if err != nil {
+		return NewErrorFromDBError(err)
 	}
 
 	if userId == 0 {
 		return NewErrorNotFound(nil)
 	}
 
-	_, err := s.Db.Exec("DELETE FROM todos WHERE id = ? AND (user_id = ? OR ?)", id, userId, isAdmin)
+	_, err = tx.Exec("DELETE FROM todos WHERE id = ? AND (user_id = ? OR ?)", id, userId, isAdmin)
 	if err != nil {
 		return NewErrorFromDBError(err)
 	}
+
+	tx.Commit()
+
 	return nil
 }
