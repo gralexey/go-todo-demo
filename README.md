@@ -9,13 +9,19 @@ Functional:
 
 ---
 
-## Solution
+## Docker container
 
-### Build
-- make
+### Build docker
+```
+make
+```
 
-### Run
-- make run
+### Run server
+```
+make run
+```
 
-### Test
-- make test
+### Run tests
+```
+make test
+```
